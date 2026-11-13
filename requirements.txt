@@ -1,0 +1,6 @@
+bleak>=0.22,<3
+mpy-cross-v6>=1.1.2,<2
+Pillow>=10,<13
+zeroconf>=0.132,<1
+ifaddr>=0.2,<1
+keyring>=25.7,<26; sys_platform == 'darwin'

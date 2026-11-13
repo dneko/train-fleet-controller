@@ -1,0 +1,25 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.idea/
+.vscode/
+.env
+.env.*
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local layouts, imported images, and exported telemetry. Examples live in examples/.
+/*.json
+map_images/
+train_photos/
+*.csv
+*.log
+
+# Keep credentials out of source control.
+firmware/rfid_reader/secrets.h
