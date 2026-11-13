@@ -1,0 +1,29 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.10', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+      - name: Compile City Hub program
+        run: python -c "from hub_program import compile_program, read_program; print(len(compile_program(read_program())), 'bytes')"
+      - name: Validate example configuration
+        run: python -c "from fleet_model import load_config; load_config('examples/fleet.example.json')"
+      - run: python scripts/build_release.py
