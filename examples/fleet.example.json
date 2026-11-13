@@ -1,0 +1,17 @@
+{
+  "network": {"host": "0.0.0.0", "port": 8765},
+  "alerts": {"sound": "siren"},
+  "automation": {"max_speed_studs_s": 15, "target_speed_studs_s": 10},
+  "trains": [
+    {"id": "train-a", "name": "Train A", "hub_name": "Train A", "tags": ["01020304"], "forward_sign": 1, "length_m": 0.5, "stop_margin_m": 0.3, "start_throttle": 25, "max_throttle": 60},
+    {"id": "train-b", "name": "Train B", "hub_name": "Train B", "tags": ["05060708"], "forward_sign": 1, "length_m": 0.5, "stop_margin_m": 0.3, "start_throttle": 25, "max_throttle": 60}
+  ],
+  "saved_trains": [],
+  "readers": [
+    {"id": "station", "name": "Station", "node": "", "x": 120, "y": 120, "distance_to_next_m": 2},
+    {"id": "east", "name": "East", "node": "", "x": 520, "y": 120, "distance_to_next_m": 2},
+    {"id": "yard", "name": "Yard", "node": "", "x": 520, "y": 420, "distance_to_next_m": 2},
+    {"id": "west", "name": "West", "node": "", "x": 120, "y": 420, "distance_to_next_m": 2}
+  ],
+  "segments": []
+}
