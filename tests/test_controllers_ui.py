@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 """Mixed controller types through real Tk; no physical outputs."""
 import copy
 import os
@@ -13,7 +14,9 @@ import test_external_ui
 @unittest.skipUnless(os.environ.get('TRAINSTUFF_GUI_TESTS') == '1', 'Requires a desktop Tk session')
 class ControllerUITests(unittest.TestCase):
     def setUp(self):
-        self.enterContext(registered_outputs())
+        contexts = ExitStack()
+        self.addCleanup(contexts.close)
+        contexts.enter_context(registered_outputs())
         test_external_ui.ExternalUITests.setUp(self)
         self.app.backend.update_trains = Mock()
 

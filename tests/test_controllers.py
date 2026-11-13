@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 import asyncio
 import copy
 import json
@@ -24,7 +25,9 @@ def mixed_config():
 
 class ControllerConfigurationTests(unittest.TestCase):
     def setUp(self):
-        self.enterContext(registered_outputs())
+        contexts = ExitStack()
+        self.addCleanup(contexts.close)
+        contexts.enter_context(registered_outputs())
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
         self.path = Path(self.folder.name)/'config.json'
@@ -96,7 +99,9 @@ class ControllerConfigurationTests(unittest.TestCase):
 
 class ControllerBackendTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.enterContext(registered_outputs())
+        contexts = ExitStack()
+        self.addCleanup(contexts.close)
+        contexts.enter_context(registered_outputs())
         self.backend = Backend.__new__(Backend)
         self.backend.loop = asyncio.get_running_loop()
         self.backend.events = queue.Queue()
