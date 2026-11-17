@@ -109,12 +109,12 @@ class TrainLibraryTests(unittest.TestCase):
         self.assertEqual(saved['photo'], 'new.png')
         self.assertEqual(merged['view'], self.config['view'])
         self.assertEqual(len(all_trains(merged)), 3)
-        self.assertFalse(can_apply_live(self.config, merged))
+        self.assertTrue(can_apply_live(self.config, merged))
 
-    def test_saved_edits_are_live_but_reactivation_requires_rebuild(self):
+    def test_saved_edits_and_reactivation_are_live(self):
         move_train(self.config, 'p', active=False)
         edited = copy.deepcopy(self.config)
         edited['saved_trains'][0]['tags'].append('31323334')
         self.assertTrue(can_apply_live(self.config, edited))
         move_train(edited, 'p', active=True)
-        self.assertFalse(can_apply_live(self.config, edited))
+        self.assertTrue(can_apply_live(self.config, edited))

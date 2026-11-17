@@ -120,6 +120,8 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
         backend.connect('b')
         await asyncio.sleep(0)
         await asyncio.sleep(0)
+        await asyncio.gather(*backend.updates)
+        await asyncio.sleep(0)
         original = dict(backend.tasks)
         self.assertEqual(backend.trains['a'].run_reconnecting.await_count, 1)
         updated = copy.deepcopy(backend.config)

@@ -185,6 +185,25 @@ class TrainControlsUITests(unittest.TestCase):
         self.key('Up')
         self.assertEqual(self.app.supervisor.throttle['a'], 1)
 
+    def test_live_roster_changes_keep_existing_controls_running(self):
+        import copy
+        self.app.command('a', 20)
+        supervisor, tracker = self.app.supervisor, self.app.tracker
+        self.app.backend.reconfigure = Mock()
+        self.app.backend.speed.reset_mock()
+        edited = copy.deepcopy(self.app.config)
+        edited['trains'].append(dict(id='new', name='New', hub_name='New', tags=[]))
+        self.app.apply_setup(edited)
+        self.root.update()
+        self.assertIs(self.app.supervisor, supervisor)
+        self.assertIs(self.app.tracker, tracker)
+        self.assertEqual(supervisor.throttle['a'], 20)
+        self.assertEqual(self.app.sliders['a'].get(), 20)
+        self.assertEqual(self.app.sliders['new'].get(), 0)
+        self.assertEqual(supervisor.on_track['new'], self.mode == 'motor')
+        self.app.backend.speed.assert_not_called()
+        self.app.backend.reconfigure.assert_not_called()
+
 
 class LiveTrainControlsUITests(TrainControlsUITests):
     mode = 'live'

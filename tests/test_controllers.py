@@ -202,3 +202,69 @@ class ControllerBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(task.done())
         self.assertEqual(track.writes, [0, 30])
         self.assertTrue(track.accepting)
+
+    async def test_live_roster_add_remove_and_readd_preserve_other_writer(self):
+        backend = self.backend
+        backend.connect('track')
+        await self.flush()
+        backend.speed('track', 30)
+        await self.flush()
+        original, task = backend.trains['track'], backend.tasks['track']
+        edited = copy.deepcopy(backend.config)
+        edited['trains'].append(output_train('second', '2'))
+        backend.update_trains(edited)
+        # A connect click immediately after saving must wait for registration.
+        backend.connect('second')
+        await self.flush()
+        await asyncio.gather(*backend.updates)
+        await self.flush()
+        second = backend.trains['second']
+        self.assertEqual(second.writes, [0])
+        backend.speed('second', 20)
+        await self.flush()
+        edited['saved_trains'] = [edited['trains'].pop()]
+        backend.update_trains(edited)
+        await self.flush()
+        await asyncio.gather(*backend.updates)
+        self.assertEqual(second.writes[-2:], [0, 0])
+        self.assertEqual(second.closed, 1)
+        self.assertNotIn('second', backend.trains)
+        self.assertNotIn('second', backend.tasks)
+        edited['trains'].append(edited['saved_trains'].pop())
+        backend.update_trains(edited)
+        await self.flush()
+        await asyncio.gather(*backend.updates)
+        self.assertIsNot(backend.trains['second'], second)
+        self.assertEqual(backend.trains['second'].writes, [])
+        self.assertNotIn('second', backend.tasks)
+        self.assertIs(backend.trains['track'], original)
+        self.assertIs(backend.tasks['track'], task)
+        self.assertFalse(task.done())
+        self.assertEqual(original.writes, [0, 30])
+
+    async def test_live_control_ownership_removes_and_registers_only_affected_session(self):
+        backend = self.backend
+        backend.config['trains'].append(output_train('second', '2'))
+        backend.trains = backend.connections(backend.config)
+        backend.connect('track')
+        backend.connect('second')
+        await self.flush()
+        track, other_task = backend.trains['track'], backend.tasks['second']
+        backend.speed('track', 30)
+        await self.flush()
+        edited = copy.deepcopy(backend.config)
+        edited['trains'][1]['control_mode'] = 'external'
+        backend.update_trains(edited)
+        await self.flush()
+        await asyncio.gather(*backend.updates)
+        self.assertEqual(track.closed, 1)
+        self.assertEqual(track.writes[-1], 0)
+        self.assertNotIn('track', backend.trains)
+        edited['trains'][1]['control_mode'] = 'fleet'
+        backend.update_trains(edited)
+        await self.flush()
+        await asyncio.gather(*backend.updates)
+        self.assertIn('track', backend.trains)
+        self.assertEqual(backend.trains['track'].writes, [])
+        self.assertIs(backend.tasks['second'], other_task)
+        self.assertFalse(other_task.done())

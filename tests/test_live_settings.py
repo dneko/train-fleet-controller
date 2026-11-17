@@ -6,7 +6,7 @@ import unittest
 
 from fleet_automation import Supervisor
 from fleet_model import load_config
-from fleet_setup import save_config
+from fleet_setup import move_train, save_config
 from loop_tracking import LoopTracker
 from train_settings import can_apply_live, merge_train_edits, update_train_runtime
 from train_speed import SpeedWarnings
@@ -78,13 +78,15 @@ class LiveSettingsTests(unittest.TestCase):
         self.assertFalse(merged['trains'][1]['in_service'])
         self.assertEqual(merged['view'], self.config['view'])
 
-    def test_layout_roster_and_ownership_require_structural_apply(self):
-        for mutate in (lambda c:c['readers'].reverse(),
-                       lambda c:c['trains'].pop(),
+    def test_only_layout_changes_require_structural_apply(self):
+        updated = copy.deepcopy(self.config)
+        updated['readers'].reverse()
+        self.assertFalse(can_apply_live(self.config, updated))
+        for mutate in (lambda c:c['trains'].pop(),
                        lambda c:c['trains'][0].update(control_mode='external')):
             updated = copy.deepcopy(self.config)
             mutate(updated)
-            self.assertFalse(can_apply_live(self.config, updated))
+            self.assertTrue(can_apply_live(self.config, updated))
 
     def test_removed_rear_does_not_release_unconfirmed_blocks(self):
         edited = copy.deepcopy(self.config)
@@ -96,6 +98,92 @@ class LiveSettingsTests(unittest.TestCase):
         edited['trains'][0].pop('rear_tag')
         update_train_runtime(self.sup, edited)
         self.assertEqual(self.tracker.clearance.occupied('a'), held)
+
+    def test_live_add_keeps_running_train_and_loads_saved_history(self):
+        self.sup.enabled = self.sup.automatic['a'] = True
+        self.sup.target = .08
+        self.sup.request('a', 25)
+        self.tracker.clearance.held['a'] = {'0', '5'}
+        self.tracker.node_sequences['sensor'] = ('boot', 42)
+        self.tracker.learning.record('a', '0', 1, 20, 500)
+        before = copy.deepcopy((self.sup.occupied(), self.sup.reservations, self.tracker.last_seen,
+                                self.tracker.journeys, self.tracker.learning.samples))
+        edited = copy.deepcopy(self.config)
+        new = copy.deepcopy(edited['trains'][0])
+        new.update(id='new', name='New', hub_name='New', tags=['21222324'])
+        edited['trains'].append(new)
+        original = self.sup.trains['a']
+        update_train_runtime(self.sup, edited)
+        self.assertIs(self.sup.trains['a'], original)
+        self.assertEqual((self.sup.occupied(), self.sup.reservations, self.tracker.last_seen,
+                          self.tracker.journeys), before[:4])
+        self.assertEqual(self.tracker.learning.get('a', '0'), before[4]['a', '0', 1])
+        self.assertEqual(self.tracker.learning.get('new', '0'), self.tracker.learning.get('a', '0'))
+        self.assertEqual(self.tracker.node_sequences, {'sensor': ('boot', 42)})
+        self.assertFalse(self.sup.on_track['new'])
+        self.assertFalse(self.sup.ready['new'])
+        self.assertFalse(self.sup.automatic['new'])
+        self.assertEqual(self.sup.throttle['new'], 0)
+        self.assertTrue(self.sup.allowed('a', reserve=False)[0])
+        self.assertTrue(self.sup.enabled)
+        self.assertEqual(self.sup.throttle['a'], 25)
+        self.assertIs(self.tracker.learning.trains['new'], self.sup.trains['new'])
+        self.assertIs(self.tracker.clearance.trains['new'], self.sup.trains['new'])
+        self.assertEqual(self.tracker.ingest(json.dumps(dict(reader='2', uid='21222324')), '2')[0], 'new')
+        self.sup.observe('new')
+        self.assertTrue(self.sup.on_track['new'])
+        self.assertEqual(self.sup.throttle['new'], 0)
+
+    def test_live_remove_clears_only_removed_train_runtime(self):
+        self.sup.request('a', 25)
+        self.sup.request('b', 30)
+        self.tracker.clearance.held.update(a={'0', '5'}, b={'3', '2'})
+        self.tracker.learning.record('a', '0', 1, 20, 500)
+        self.tracker.learning.record('b', '3', 1, 20, 600)
+        self.sup.faults['b'] = 'Retain this fault'
+        self.sup.operator_paused.add('a')
+        self.sup.forced['a'] = 25
+        self.tracker.previous_passage['a'] = ({'reader': '0'}, self.now)
+        edited = copy.deepcopy(self.config)
+        move_train(edited, 'a', active=False)
+        update_train_runtime(self.sup, edited)
+        self.assertEqual(self.sup.throttle, {'b': 30})
+        self.assertEqual(self.sup.faults, {'b': 'Retain this fault'})
+        self.assertEqual(self.sup.occupied(), {'3': {'b'}, '2': {'b'}})
+        self.assertNotIn('a', self.sup.operator_paused)
+        self.assertNotIn('a', self.sup.forced)
+        self.assertNotIn('a', self.tracker.commands)
+        self.assertNotIn('a', self.tracker.previous_passage)
+        self.assertEqual(self.tracker.last_seen, {'b': ('3', self.now)})
+        self.assertEqual(set(self.tracker.learning.trains), {'b'})
+        self.assertEqual(set(self.tracker.clearance.trains), {'b'})
+        self.assertIsNone(self.tracker.learning.get('a', '0'))
+        self.assertEqual(self.config['saved_trains'][0]['section_history'], edited['saved_trains'][0]['section_history'])
+        move_train(edited, 'a', active=True)
+        update_train_runtime(self.sup, edited)
+        self.assertEqual(self.sup.throttle, {'b': 30, 'a': 0})
+        self.assertNotIn('a', self.tracker.last_seen)
+        self.assertIsNotNone(self.tracker.learning.get('a', '0'))
+
+    def test_ownership_change_keeps_confirmed_front_and_rear_occupancy(self):
+        self.tracker.clearance.held['a'] = {'0', '5'}
+        occupied = self.sup.occupied()
+        edited = copy.deepcopy(self.config)
+        edited['trains'][0]['control_mode'] = 'external'
+        update_train_runtime(self.sup, edited)
+        self.assertEqual(self.sup.external, {'a'})
+        self.assertEqual(self.tracker.external, {'a'})
+        self.assertEqual(self.sup.occupied(), occupied)
+        self.assertNotIn('a', self.tracker.commands)
+        edited['trains'][0]['control_mode'] = 'fleet'
+        update_train_runtime(self.sup, edited)
+        self.assertFalse(self.sup.external)
+        self.assertFalse(self.tracker.external)
+        self.assertEqual(self.sup.occupied(), occupied)
+        self.assertFalse(self.sup.ready['a'])
+        self.assertFalse(self.sup.automatic['a'])
+        self.assertIn('a', self.sup.operator_paused)
+        self.assertEqual(self.tracker.commands['a'], 0)
 
     def test_duplicate_tag_validation_preserves_file_and_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
