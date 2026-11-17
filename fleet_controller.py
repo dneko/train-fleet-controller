@@ -1,6 +1,7 @@
 """Run: python fleet_controller.py [--config fleet.json] [--demo]."""
 import argparse
 import asyncio
+import copy
 from pathlib import Path
 import threading
 import tkinter as tk
@@ -44,19 +45,22 @@ class Backend:
         self.loop.close()
 
     def connect(self, train_id):
-        if train_id not in self.trains:
+        if train_id not in getattr(self, 'requested_trains', self.trains):
             return
-        def start():
-            if train_id not in self.trains:
-                return
-            if self.trains[train_id].busy:
-                return
-            task = self.tasks.get(train_id)
-            if task is None or task.done():
-                train = self.trains[train_id]
-                self.tasks[train_id] = self.loop.create_task(train.run_reconnecting())
+        async def start():
+            async with self.settings_lock:
+                train = self.trains.get(train_id)
+                if train is None or train.busy:
+                    return
+                task = self.tasks.get(train_id)
+                if task is None or task.done():
+                    self.tasks[train_id] = self.loop.create_task(train.run_reconnecting())
         if not self.demo:
-            self.loop.call_soon_threadsafe(start)
+            def schedule():
+                task = self.loop.create_task(start())
+                self.updates.add(task)
+                task.add_done_callback(self.updates.discard)
+            self.loop.call_soon_threadsafe(schedule)
 
     def upload_program(self, train_id, source):
         from train_controllers.pybricks_updates import upload_program
@@ -76,7 +80,11 @@ class Backend:
         if self.demo:
             self.events.put(("status", train_id, f"Demo speed: {value}"))
         else:
-            self.loop.call_soon_threadsafe(self.trains[train_id].set_speed, value)
+            def send():
+                train = self.trains.get(train_id)
+                if train is not None and (value == 0 or train_id not in getattr(self, 'changing_trains', set())):
+                    train.set_speed(value)
+            self.loop.call_soon_threadsafe(send)
 
     def waiting(self, train_id, waiting):
         if (not self.demo and train_id in self.trains
@@ -101,34 +109,41 @@ class Backend:
         return connections
 
     def update_trains(self, config):
-        """Apply edits on the control loop; restart only the changed hardware session."""
-        updates = [dict(t) for t in config['trains']]
+        """Reconcile hardware sessions; unrelated writers continue uninterrupted."""
+        config = copy.deepcopy(config)
+        updates = {t['id']: t for t in config['trains'] if not is_external(t)}
+        self.requested_trains = set(updates)
         async def update():
-            for updated in updates:
-                tid = updated['id']
-                connection = self.trains.get(tid)
-                if connection is None:
-                    continue
-                if connection_identity(connection.train) != connection_identity(updated):
-                    task = self.tasks.get(tid)
-                    active = task is not None and not task.done()
-                    connection.set_speed(0)
-                    if active:
-                        await asyncio.sleep(.6)
-                        task.cancel()
-                        await asyncio.gather(task, return_exceptions=True)
-                    if controller_spec(connection.train).type_id != controller_spec(updated).type_id:
-                        connection = create_controller(updated, self.events.put)
-                        connection.recording_history = (getattr(self, 'recording_history', False)
-                                                        and supports(updated, 'power_telemetry'))
+            removed = self.trains.keys() - updates.keys()
+            changed = {tid for tid in self.trains.keys() & updates.keys()
+                       if connection_identity(self.trains[tid].train) != connection_identity(updates[tid])}
+            self.changing_trains = removed | changed
+            active = {tid for tid in self.changing_trains
+                      if tid in self.tasks and not self.tasks[tid].done()}
+            try:
+                for tid in self.changing_trains:
+                    self.trains[tid].set_speed(0)
+                if active:
+                    await asyncio.sleep(.6)
+                # Release all changed endpoints before reconnecting any of them.
+                tasks = [self.tasks.pop(tid) for tid in self.changing_trains if tid in self.tasks]
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                for tid in removed:
+                    self.trains.pop(tid)
+                for tid, updated in updates.items():
+                    connection = self.trains.get(tid)
+                    if connection is None or controller_spec(connection.train).type_id != controller_spec(updated).type_id:
+                        connection = self.connections({'trains': [updated]})[tid]
                         self.trains[tid] = connection
                     else:
                         connection.train = updated
-                    if active:
+                    if tid in active:
                         self.tasks[tid] = self.loop.create_task(connection.run_reconnecting())
-                else:
-                    connection.train = updated
-            self.config = config
+                self.config = config
+            finally:
+                self.changing_trains = set()
         async def apply():
             async with self.settings_lock:
                 await update()
@@ -154,6 +169,7 @@ class Backend:
         # Connections close on cancellation; no further motion commands can be sent.
 
     def reconfigure(self, config):
+        self.requested_trains = {t['id'] for t in config['trains'] if not is_external(t)}
         async def apply():
             for train in self.trains.values():
                 train.set_speed(0)

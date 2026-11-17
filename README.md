@@ -193,11 +193,16 @@ the app tracks them and can use them as a speed source.
 
 Each configuration saves its own active list and library; **Save configuration as…**
 carries both lists and their photos to the new file. Adding or removing active trains
-stops and disconnects the fleet and resets tracking. Reconnect and establish positions
-after applying; Auto stays off. Stop external trains with their own controller.
-Removing the selected external speed source also clears that selection. Editing only
-saved trains leaves the active fleet running. Closing the library without saving
-discards its edits.
+with **Save and apply** updates the running roster in place. Other trains keep their
+connections, throttle, Auto selections, confirmed positions, rear clearance and learned
+times; the map view and reader connections stay intact. New active trains start stopped
+and off track: connect their controller, then place them at a checkpoint or detect their
+RFID before running them. Motor-only mode does not require placement.
+Removing a train stops and disconnects only its controller, after confirmation that it
+is physically off the track. Stop external trains with their own controller. Removing
+or changing a live external speed source pauses its followers until you explicitly
+resume them or select a source; their tracking and connections are retained.
+Closing the library without saving discards its edits.
 
 Train controllers are compact cards in the left sidebar, with no scrolling.
 Only active trains appear: two active trains show two cards.
@@ -251,10 +256,14 @@ for speed measurements. Switching direction keeps the last confirmed occupied
 block, clears the previous speed sample, and waits for new RFID detections to
 establish position and speed again. Signed measured speed is negative in reverse.
 Test polarity with wheels lifted. IDs, hub names and tag assignments must be unique.
+Existing train IDs stay fixed so live tracking keeps the same identity; edit the
+display name to rename a train. IDs for newly created trains can be edited before saving.
 
-Train-only edits in fleet setup also apply live. Changing the roster, control
-ownership, or loop/network structure still stops and disconnects the fleet and
-resets tracking; reconnect and locate trains after those structural changes.
+Train edits, roster changes and control-ownership changes in fleet setup also apply
+live. Controller, polarity or ownership changes stop only the affected train and keep
+its confirmed occupancy. A newly fleet-controlled train waits for you to connect and
+resume it. Only loop/network structure changes stop and disconnect the entire fleet
+and reset tracking; reconnect and locate trains after those structural changes.
 Saves are atomic, and validation/save failures leave the running configuration
 unchanged. No app restart or hand-editing JSON is required.
 
@@ -665,7 +674,7 @@ command, not a physical light measurement.
 This is tag-based occupancy, not proof that the train's last carriage has cleared
 a boundary. During a network outage the ESP32 retains the last commanded state;
 a reboot starts with the light off until it hears from the Mac. Restarting the
-Mac or applying setup resets tracking, so LEDs return off until trains are located
+Mac or applying loop/network changes resets tracking, so LEDs return off until trains are located
 again. Off therefore does not certify that a physical segment is clear.
 
 Identification blinks a fixed-color LED, not an RGB color change. The sketch uses
@@ -999,7 +1008,8 @@ external train. Block holds retain the existing flashing cards and Auto resumpti
 
 Ownership is stored as `control_mode: "external"` (omitted or `"fleet"` means fleet
 control). The source selection is saved in `automation.pace_train_id`, but matching
-starts **off** after launch or applying setup. No hub firmware update is needed.
+starts **off** after launch or applying loop/network changes. Train-only saves retain
+live matching when the source remains externally controlled. No hub firmware update is needed.
 In demo mode an external train moves independently at 10 studs/s while the demo is
 running; simulated checkpoint readings feed the same matching logic.
 
@@ -1062,7 +1072,9 @@ connection-loss handling still work. Collision and overdue alarms remain active;
 the override never clears occupancy or fabricates a checkpoint detection.
 
 **Stop**, **End force**, moving the slider to zero, **STOP FLEET/ALL**, applying
-setup, loading a layout, or closing the app cancels the override and sends zero.
+loop/network changes, loading a layout, or closing the app cancels the override and sends zero.
+Removing a train or changing its controller, polarity or ownership cancels only that
+train's override. Unrelated roster and train-setting changes retain other overrides.
 A connection loss cancels it too; reconnecting does not restore it. Overrides are
 never saved. Ending Force during external-speed matching leaves the train paused
 until **Resume**, so Auto cannot immediately restart it. Force Run is disabled

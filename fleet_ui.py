@@ -328,157 +328,15 @@ class FleetApp:
         ttk.Button(maximum_controls, text='Set', width=4, command=self.set_auto_max).pack(side='left',padx=(4,0))
         roster_bar = ttk.Frame(sidebar)
         roster_bar.pack(fill='x', padx=10, pady=(8,4))
-        ttk.Label(roster_bar, text=f"ACTIVE TRAINS  /  {len(self.config['trains'])}", style='Section.TLabel').pack(side='left')
+        self.roster_label = ttk.Label(roster_bar, style='Section.TLabel')
+        self.roster_label.pack(side='left')
         ttk.Button(roster_bar, text='Train library…', style='Compact.TButton',
                    command=lambda: self.setup(library_only=True)).pack(side='right')
         self.keyboard_hint = tk.StringVar(value='Click a train card · ↑/→ +1 · ↓/← −1')
         ttk.Label(sidebar, textvariable=self.keyboard_hint, style='Muted.TLabel').pack(anchor='w',padx=10)
-        self.control_cards = {}
-        self.auto_checks = {}
-        self.card_locations = {}
-        self.card_speeds, self.card_speed_details, self.speed_labels = {}, {}, {}
-        self.card_buttons = {}
-        self.resume_buttons = {}
-        self.force_buttons = {}
-        self.card_on_track = {}
-        self.photo_buttons, self.train_photo_images = {}, {}
         self.control_area = ttk.Frame(sidebar)
-        cards = self.control_area
-        cards.pack(fill='x')
-        # Only configured trains get cards. Additional columns keep larger rosters visible.
-        for index, train in enumerate(self.config['trains']):
-            tid = train['id']
-            prefix = f'Train{index}'
-            card = ttk.Frame(cards, padding=(8,6), width=380, height=170, style=f'{prefix}.ControlCard.TFrame')
-            rows = 2 if self.motor_only else 4
-            card.grid(row=index % rows, column=index // rows, sticky='ew', padx=4, pady=4)
-            card.grid_propagate(False)
-            self.control_cards[tid] = card
-            card.columnconfigure(0, weight=1)
-            title_row = ttk.Frame(card, style=f'{prefix}.Card.TFrame')
-            title_row.grid(row=0,column=0,sticky='ew')
-            title_row.columnconfigure(0, weight=1)
-            title = ttk.Label(title_row, text='●  '+train['name'], style=f'{prefix}.CardTitle.TLabel',
-                              width=12)
-            title.grid(row=0,column=0,sticky='ew')
-            self.train_titles[tid] = title
-            Tooltip(title, lambda t=tid:self.supervisor.trains[t]['name'])
-            ttk.Button(title_row, text='Settings', width=7, style='Compact.TButton',
-                       command=lambda t=tid:self.setup(t)).grid(row=0,column=1,sticky='e')
-            self.batteries[tid] = None
-            battery_label = ttk.Label(card, style=f'{prefix}.CardSmall.TLabel', anchor='w')
-            battery_label.grid(row=1,column=0,sticky='ew')
-            self.battery_labels[tid] = battery_label
-            Tooltip(battery_label, lambda t=tid:self.battery_details(t))
-            if not is_external(train):
-                battery_label.configure(cursor='hand2')
-                battery_label.bind('<Button-1>', lambda _, t=tid:self.show_battery_history(t))
-            self.statuses[tid] = tk.StringVar(value='External control · RFID tracking' if is_external(train)
-                                            else 'Demo' if self.demo else 'Disconnected')
-            self.locations[tid] = tk.StringVar(value='Block unknown — awaiting first detection')
-            self.dispatch_labels[tid] = tk.StringVar()
-            self.card_locations[tid] = tk.StringVar(value='Awaiting checkpoint')
-            self.card_speeds[tid] = tk.StringVar(value='— studs/s · no reads')
-            self.card_speed_details[tid] = ''
-            info = ttk.Frame(card, style=f'{prefix}.Card.TFrame')
-            info.grid(row=2,column=0,rowspan=3,sticky='ew')
-            info.columnconfigure(1, weight=1)
-            photo_slot = ttk.Frame(info, width=80, height=52, style=f'{prefix}.Card.TFrame')
-            photo_slot.grid(row=0,column=0,rowspan=3,padx=(0,8))
-            photo_button = tk.Button(photo_slot, text='Add\nphoto', font=('Helvetica',9),
-                                     borderwidth=0, highlightthickness=1, relief='flat',
-                                     cursor='hand2', command=lambda t=tid:self.edit_train_photo(t))
-            photo_button.place(x=0,y=0,relwidth=1,relheight=1)
-            self.photo_buttons[tid] = photo_button
-            self.refresh_train_photo(tid)
-            Tooltip(photo_button, 'Add, change, or remove this train’s photo')
-            for row,variable in ((1,self.card_speeds[tid]), (2,self.locations[tid])):
-                # A single clipped line keeps card size stable; hover shows full details.
-                label = ttk.Label(info, textvariable=self.card_locations[tid] if row == 2 else variable,
-                                  style=f'{prefix}.CardSpeed.TLabel' if row == 1 else f'{prefix}.CardSmall.TLabel',
-                                  width=27, anchor='w')
-                height = 21 if row == 1 else 17
-                slot = ttk.Frame(info, height=height, style=f'{prefix}.Card.TFrame')
-                slot.grid(row=row-1,column=1,sticky='ew')
-                slot.grid_propagate(False)
-                label.place(in_=slot,x=0,y=0,relwidth=1,height=height)
-                if row == 1:
-                    self.speed_labels[tid] = label
-                    Tooltip(label,lambda t=tid:self.card_speed_details[t]+'\n'+self.statuses[t].get())
-                else:
-                    Tooltip(label, variable.get)
-            reason_slot = ttk.Frame(card, height=30, style=f'{prefix}.Card.TFrame')
-            reason_slot.grid(row=6,column=0,sticky='ew')
-            reason_slot.grid_propagate(False)
-            reason_slot.columnconfigure(0, weight=1)
-            reason_slot.rowconfigure(0, weight=1)
-            reason_label = ttk.Label(reason_slot,textvariable=self.dispatch_labels[tid],
-                                     style=f'{prefix}.CardReason.TLabel',font=('Helvetica',10,'bold'),
-                                     wraplength=320,anchor='w',justify='left')
-            reason_label.grid(row=0,column=0,sticky='nsew')
-            self.reason_labels[tid] = reason_label
-            reason_label.bind('<Configure>',lambda e,l=reason_label:l.configure(wraplength=max(80,e.width-4)))
-            Tooltip(reason_label,lambda t=tid: '\n'.join(filter(None, (
-                self.dispatch_labels[t].get(), self.speed_warning_text.get(t),
-                self.supervisor.automatic_status(t), self.statuses[t].get()))))
-            resume_button = ttk.Button(reason_slot, text='Resume', width=7, style='Compact.TButton',
-                                       command=lambda t=tid:self.resume(t))
-            resume_button.grid(row=0,column=1,padx=(4,0),sticky='e')
-            resume_button.grid_remove()
-            self.resume_buttons[tid] = resume_button
-            toggles = ttk.Frame(info, style=f'{prefix}.Card.TFrame')
-            toggles.grid(row=2,column=1,sticky='w')
-            self.auto_vars[tid] = tk.BooleanVar(value=False)
-            self.service_vars[tid] = tk.BooleanVar(value=self.supervisor.service[tid])
-            auto_check = ttk.Checkbutton(toggles,text='AUTO',style='Auto.Toolbutton',width=8,variable=self.auto_vars[tid],
-                                        command=lambda t=tid:self.set_auto(t))
-            if not self.motor_only:
-                auto_check.pack(side='left',padx=(0,6))
-            self.auto_checks[tid] = auto_check
-            ttk.Checkbutton(toggles,text='In service',style=f'{prefix}.Card.TCheckbutton',variable=self.service_vars[tid],
-                            command=lambda t=tid:self.set_service(t)).pack(side='left')
-            actions = ttk.Frame(card, style=f'{prefix}.Card.TFrame')
-            actions.grid(row=5,column=0,sticky='w',pady=(2,2))
-            self.card_buttons[tid] = []
-            for icon, button_style, hint, action in (
-                ('↻', 'Connect.Icon.TButton', 'Connect / retry controller', lambda t=tid: None if self.applying else self.backend.connect(t)),
-                ('■', 'Stop.Icon.TButton', 'Stop this train', lambda t=tid:self.stop(t)),
-                ('⌖', 'Position.Icon.TButton', 'Set initial checkpoint position', lambda t=tid:self.place_train(t)),
-                ('↗', 'Remove.Icon.TButton', 'Mark train physically removed from the track', lambda t=tid:self.off_track(t)),
-                ('i', 'Details.Icon.TButton', 'Show train status and tracking details', lambda t=tid:self.train_details(t))):
-                if self.motor_only and button_style in ('Position.Icon.TButton', 'Remove.Icon.TButton'):
-                    continue
-                button_slot = ttk.Frame(actions, width=32, height=28, style=f'{prefix}.Card.TFrame')
-                button_slot.pack(side='left', padx=(0,4))
-                button_slot.pack_propagate(False)
-                button = ttk.Button(button_slot,text=icon,style=button_style,command=action)
-                if is_external(train) and button_style in ('Connect.Icon.TButton', 'Stop.Icon.TButton'):
-                    button.configure(state='disabled')
-                self.card_buttons[tid].append((button, button_style))
-                button.pack(fill='both', expand=True)
-                Tooltip(button,hint)
-            force_button = ttk.Button(actions,text='Force run',width=8,style='Compact.Force.TButton',
-                                      command=lambda t=tid:self.toggle_force(t))
-            if not self.motor_only:
-                force_button.pack(side='left',padx=(4,0))
-            self.force_buttons[tid] = force_button
-            Tooltip(force_button,lambda t=tid: ('End Force: stop this train and restore automatic protection.'
-                    if t in self.supervisor.forced else
-                    f'Force Run at {self.supervisor.force_value(t):+d}%: bypass block, speed and tracking holds. Stop or End force cancels it.'))
-            slider = ThrottleScale(card,from_=100,to=-100,orient='vertical',length=146,resolution=1,
-                              width=26,sliderlength=32,highlightthickness=0,bg='white',font=('Helvetica',12,'bold'),
-                              activebackground='#2563eb',troughcolor='#e2e8f0',
-                              command=lambda value,t=tid:self.command(t,int(value)))
-            slider.grid(row=0,column=1,rowspan=7,sticky='ns',padx=(8,0))
-            self.sliders[tid] = slider
-            Tooltip(slider,'Throttle: + forward · 0 stop · − reverse\nSelect this card, then ↑/→ +1 or ↓/← −1.')
-            pending = [card]
-            while pending:
-                widget = pending.pop()
-                widget.bindtags(('FleetTrainCard',) + widget.bindtags())
-                pending.extend(widget.winfo_children())
-        if not self.config['trains']:
-            ttk.Label(cards,text='No active trains.\nOpen Train library to add one.',style='Muted.TLabel').pack(padx=12,pady=20)
+        self.control_area.pack(fill='x')
+        self.build_train_cards()
         if self.motor_only:
             self.log = tk.Text(sidebar, height=3, state='disabled')
             self.log.pack(fill='x',padx=10,pady=10)
@@ -538,6 +396,167 @@ class FleetApp:
         self.refresh_run_status()
         self.update_view(save=False)
         self.draw()
+
+    def build_train_cards(self):
+        """Refresh only the roster widgets; preserve control, tracking and map state."""
+        for child in self.control_area.winfo_children():
+            child.destroy()
+        tids = set(self.supervisor.trains)
+        self.statuses = {tid: value for tid, value in self.statuses.items() if tid in tids}
+        self.locations = {tid: value for tid, value in self.locations.items() if tid in tids}
+        self.batteries = {tid: self.batteries.get(tid) for tid in tids}
+        self.auto_vars, self.service_vars, self.dispatch_labels = {}, {}, {}
+        self.sliders, self.train_titles, self.battery_labels = {}, {}, {}
+        if self.active_train not in tids:
+            self.active_train = None
+            self.keyboard_hint.set('Click a train card · ↑/→ +1 · ↓/← −1')
+        self.roster_label.configure(text=f"ACTIVE TRAINS  /  {len(tids)}")
+        self.control_cards = {}
+        self.auto_checks = {}
+        self.card_locations = {}
+        self.card_speeds, self.card_speed_details, self.speed_labels = {}, {}, {}
+        self.card_buttons = {}
+        self.resume_buttons = {}
+        self.force_buttons = {}
+        self.card_on_track = {}
+        self.photo_buttons, self.train_photo_images = {}, {}
+        cards = self.control_area
+        # Only configured trains get cards. Additional columns keep larger rosters visible.
+        for index, train in enumerate(self.config['trains']):
+            tid = train['id']
+            prefix = f'Train{index}'
+            card = ttk.Frame(cards, padding=(8,6), width=380, height=170, style=f'{prefix}.ControlCard.TFrame')
+            rows = 2 if self.motor_only else 4
+            card.grid(row=index % rows, column=index // rows, sticky='ew', padx=4, pady=4)
+            card.grid_propagate(False)
+            self.control_cards[tid] = card
+            card.columnconfigure(0, weight=1)
+            title_row = ttk.Frame(card, style=f'{prefix}.Card.TFrame')
+            title_row.grid(row=0,column=0,sticky='ew')
+            title_row.columnconfigure(0, weight=1)
+            title = ttk.Label(title_row, text='●  '+train['name'], style=f'{prefix}.CardTitle.TLabel',
+                              width=12)
+            title.grid(row=0,column=0,sticky='ew')
+            self.train_titles[tid] = title
+            Tooltip(title, lambda t=tid:self.supervisor.trains[t]['name'])
+            ttk.Button(title_row, text='Settings', width=7, style='Compact.TButton',
+                       command=lambda t=tid:self.setup(t)).grid(row=0,column=1,sticky='e')
+            battery_label = ttk.Label(card, style=f'{prefix}.CardSmall.TLabel', anchor='w')
+            battery_label.grid(row=1,column=0,sticky='ew')
+            self.battery_labels[tid] = battery_label
+            Tooltip(battery_label, lambda t=tid:self.battery_details(t))
+            if not is_external(train):
+                battery_label.configure(cursor='hand2')
+                battery_label.bind('<Button-1>', lambda _, t=tid:self.show_battery_history(t))
+            if tid not in self.statuses:
+                self.statuses[tid] = tk.StringVar(value='External control · RFID tracking' if is_external(train)
+                                                else 'Demo' if self.demo else 'Disconnected')
+            if tid not in self.locations:
+                self.locations[tid] = tk.StringVar(value='Block unknown — awaiting first detection')
+            self.dispatch_labels[tid] = tk.StringVar()
+            self.card_locations[tid] = tk.StringVar(value='Awaiting checkpoint')
+            self.card_speeds[tid] = tk.StringVar(value='— studs/s · no reads')
+            self.card_speed_details[tid] = ''
+            info = ttk.Frame(card, style=f'{prefix}.Card.TFrame')
+            info.grid(row=2,column=0,rowspan=3,sticky='ew')
+            info.columnconfigure(1, weight=1)
+            photo_slot = ttk.Frame(info, width=80, height=52, style=f'{prefix}.Card.TFrame')
+            photo_slot.grid(row=0,column=0,rowspan=3,padx=(0,8))
+            photo_button = tk.Button(photo_slot, text='Add\nphoto', font=('Helvetica',9),
+                                     borderwidth=0, highlightthickness=1, relief='flat',
+                                     cursor='hand2', command=lambda t=tid:self.edit_train_photo(t))
+            photo_button.place(x=0,y=0,relwidth=1,relheight=1)
+            self.photo_buttons[tid] = photo_button
+            self.refresh_train_photo(tid)
+            Tooltip(photo_button, 'Add, change, or remove this train’s photo')
+            for row,variable in ((1,self.card_speeds[tid]), (2,self.locations[tid])):
+                # A single clipped line keeps card size stable; hover shows full details.
+                label = ttk.Label(info, textvariable=self.card_locations[tid] if row == 2 else variable,
+                                  style=f'{prefix}.CardSpeed.TLabel' if row == 1 else f'{prefix}.CardSmall.TLabel',
+                                  width=27, anchor='w')
+                height = 21 if row == 1 else 17
+                slot = ttk.Frame(info, height=height, style=f'{prefix}.Card.TFrame')
+                slot.grid(row=row-1,column=1,sticky='ew')
+                slot.grid_propagate(False)
+                label.place(in_=slot,x=0,y=0,relwidth=1,height=height)
+                if row == 1:
+                    self.speed_labels[tid] = label
+                    Tooltip(label,lambda t=tid:self.card_speed_details[t]+'\n'+self.statuses[t].get())
+                else:
+                    Tooltip(label, variable.get)
+            reason_slot = ttk.Frame(card, height=30, style=f'{prefix}.Card.TFrame')
+            reason_slot.grid(row=6,column=0,sticky='ew')
+            reason_slot.grid_propagate(False)
+            reason_slot.columnconfigure(0, weight=1)
+            reason_slot.rowconfigure(0, weight=1)
+            reason_label = ttk.Label(reason_slot,textvariable=self.dispatch_labels[tid],
+                                     style=f'{prefix}.CardReason.TLabel',font=('Helvetica',10,'bold'),
+                                     wraplength=320,anchor='w',justify='left')
+            reason_label.grid(row=0,column=0,sticky='nsew')
+            self.reason_labels[tid] = reason_label
+            reason_label.bind('<Configure>',lambda e,l=reason_label:l.configure(wraplength=max(80,e.width-4)))
+            Tooltip(reason_label,lambda t=tid: '\n'.join(filter(None, (
+                self.dispatch_labels[t].get(), self.speed_warning_text.get(t),
+                self.supervisor.automatic_status(t), self.statuses[t].get()))))
+            resume_button = ttk.Button(reason_slot, text='Resume', width=7, style='Compact.TButton',
+                                       command=lambda t=tid:self.resume(t))
+            resume_button.grid(row=0,column=1,padx=(4,0),sticky='e')
+            resume_button.grid_remove()
+            self.resume_buttons[tid] = resume_button
+            toggles = ttk.Frame(info, style=f'{prefix}.Card.TFrame')
+            toggles.grid(row=2,column=1,sticky='w')
+            self.auto_vars[tid] = tk.BooleanVar(value=self.supervisor.automatic[tid])
+            self.service_vars[tid] = tk.BooleanVar(value=self.supervisor.service[tid])
+            auto_check = ttk.Checkbutton(toggles,text='AUTO',style='Auto.Toolbutton',width=8,variable=self.auto_vars[tid],
+                                        command=lambda t=tid:self.set_auto(t))
+            if not self.motor_only:
+                auto_check.pack(side='left',padx=(0,6))
+            self.auto_checks[tid] = auto_check
+            ttk.Checkbutton(toggles,text='In service',style=f'{prefix}.Card.TCheckbutton',variable=self.service_vars[tid],
+                            command=lambda t=tid:self.set_service(t)).pack(side='left')
+            actions = ttk.Frame(card, style=f'{prefix}.Card.TFrame')
+            actions.grid(row=5,column=0,sticky='w',pady=(2,2))
+            self.card_buttons[tid] = []
+            for icon, button_style, hint, action in (
+                ('↻', 'Connect.Icon.TButton', 'Connect / retry controller', lambda t=tid: None if self.applying else self.backend.connect(t)),
+                ('■', 'Stop.Icon.TButton', 'Stop this train', lambda t=tid:self.stop(t)),
+                ('⌖', 'Position.Icon.TButton', 'Set initial checkpoint position', lambda t=tid:self.place_train(t)),
+                ('↗', 'Remove.Icon.TButton', 'Mark train physically removed from the track', lambda t=tid:self.off_track(t)),
+                ('i', 'Details.Icon.TButton', 'Show train status and tracking details', lambda t=tid:self.train_details(t))):
+                if self.motor_only and button_style in ('Position.Icon.TButton', 'Remove.Icon.TButton'):
+                    continue
+                button_slot = ttk.Frame(actions, width=32, height=28, style=f'{prefix}.Card.TFrame')
+                button_slot.pack(side='left', padx=(0,4))
+                button_slot.pack_propagate(False)
+                button = ttk.Button(button_slot,text=icon,style=button_style,command=action)
+                if is_external(train) and button_style in ('Connect.Icon.TButton', 'Stop.Icon.TButton'):
+                    button.configure(state='disabled')
+                self.card_buttons[tid].append((button, button_style))
+                button.pack(fill='both', expand=True)
+                Tooltip(button,hint)
+            force_button = ttk.Button(actions,text='Force run',width=8,style='Compact.Force.TButton',
+                                      command=lambda t=tid:self.toggle_force(t))
+            if not self.motor_only:
+                force_button.pack(side='left',padx=(4,0))
+            self.force_buttons[tid] = force_button
+            Tooltip(force_button,lambda t=tid: ('End Force: stop this train and restore automatic protection.'
+                    if t in self.supervisor.forced else
+                    f'Force Run at {self.supervisor.force_value(t):+d}%: bypass block, speed and tracking holds. Stop or End force cancels it.'))
+            slider = ThrottleScale(card,from_=100,to=-100,orient='vertical',length=146,resolution=1,
+                              width=26,sliderlength=32,highlightthickness=0,bg='white',font=('Helvetica',12,'bold'),
+                              activebackground='#2563eb',troughcolor='#e2e8f0',
+                              command=lambda value,t=tid:self.command(t,int(value)))
+            slider.grid(row=0,column=1,rowspan=7,sticky='ns',padx=(8,0))
+            self.sliders[tid] = slider
+            slider.set(self.supervisor.throttle[tid])
+            Tooltip(slider,'Throttle: + forward · 0 stop · − reverse\nSelect this card, then ↑/→ +1 or ↓/← −1.')
+            pending = [card]
+            while pending:
+                widget = pending.pop()
+                widget.bindtags(('FleetTrainCard',) + widget.bindtags())
+                pending.extend(widget.winfo_children())
+        if not self.config['trains']:
+            ttk.Label(cards,text='No active trains.\nOpen Train library to add one.',style='Muted.TLabel').pack(padx=12,pady=20)
 
     def train_for_widget(self, widget):
         while widget is not None:
@@ -1512,45 +1531,78 @@ class FleetApp:
         self.backend.reconfigure(saved)
 
     def apply_live_trains(self, saved):
-        for train in saved['trains']:
-            tid = train['id']
-            old = self.supervisor.trains[tid]
-            controller_changed = connection_identity(old) != connection_identity(train)
-            if controller_changed or old.get('forward_sign', 1) != train.get('forward_sign', 1):
+        before = self.supervisor.trains
+        after = {train['id']: train for train in saved['trains']}
+        added, removed = after.keys() - before.keys(), before.keys() - after.keys()
+        rebuild_cards = ([(t['id'], is_external(t)) for t in self.config['trains']] !=
+                         [(t['id'], is_external(t)) for t in saved['trains']])
+        source = self.supervisor.pace_train or self.pace_choices.get(self.pace_choice.get())
+        if self.supervisor.pace_train is not None and (
+                self.supervisor.pace_train not in after or not is_external(after[self.supervisor.pace_train])):
+            # Losing the speed source must not silently switch followers to the
+            # manual target. Keep their connections/positions and require Resume.
+            self.supervisor.set_pace_train(None)
+            self.match_external.set(False)
+            for tid in before.keys() - self.supervisor.external:
+                self.supervisor.pause(tid)
+                self.send(tid, 0)
+            self.target_value.set(self.supervisor.target / STUD_M)
+            source = None
+            self.append('Speed source removed or changed: followers paused; select a source or resume explicitly.')
+        for tid, old in before.items():
+            train = after.get(tid)
+            controller_changed = train is None or connection_identity(old) != connection_identity(train)
+            if controller_changed or old.get('forward_sign', 1) != train.get('forward_sign', 1) or (
+                    old.get('in_service', True) and not train.get('in_service', True)):
                 self.stop(tid)  # Send zero with the OLD polarity/connection first.
-                if controller_changed and not self.demo and tid not in self.supervisor.external:
+                if controller_changed and train is not None:
                     self.supervisor.connection_state(tid, False)
                     self.batteries[tid] = None
-                    self.statuses[tid].set('Controller changed — reconnecting if previously connected')
-        update_train_runtime(self.supervisor, saved)
-        if 'saved_trains' in saved:
-            self.config['saved_trains'] = saved['saved_trains']
-        else:
-            self.config.pop('saved_trains', None)
+                    self.statuses[tid].set('External control · RFID tracking' if is_external(train) else
+                                           'Demo' if self.demo else 'Controller changed — connect / retry if needed')
+                    if self.demo:
+                        self.supervisor.ready[tid] = True
+        update_train_runtime(self.supervisor, saved, ready=self.demo)
+        for tid in removed:
+            self.demo_positions.pop(tid, None)
+            self.speed_warnings.limited_since.pop(tid, None)
+            self.speed_warning_text.pop(tid, None)
+            dialog = self.power_alert_dialogs.pop(tid, None)
+            if dialog is not None and dialog.winfo_exists():
+                dialog.destroy()
         # Retain history only for the same train/hub/polarity identity. Do not
         # insert a gap for an unrelated library or display-name edit.
         keys = {history_identity(t) for t in all_trains(self.config) if supports(t, 'power_telemetry')}
         self.battery_histories = {key: history for key, history in self.battery_histories.items() if key in keys}
         self.power_profiles = {key: profile for key, profile in self.power_profiles.items() if key in keys}
         self.backend.update_trains(self.config)
+        if rebuild_cards:
+            self.build_train_cards()
         for train in self.config['trains']:
             tid = train['id']
             self.train_titles[tid].configure(text='●  ' + train['name'])
+            self.service_vars[tid].set(self.supervisor.service[tid])
             # Apply a lowered limit immediately, without touching other trains.
             old = self.supervisor.throttle[tid]
             if tid not in self.supervisor.forced and abs(old) > train.get('max_throttle', 70):
                 self.send(tid, self.supervisor.request(tid, old))
-        source = self.supervisor.pace_train or self.pace_choices.get(self.pace_choice.get())
         self.pace_choices = {f"{t['name']} ({t['id']})": t['id'] for t in self.config['trains'] if is_external(t)}
-        self.pace_choice.configure(values=list(self.pace_choices))
+        self.pace_choice.configure(values=list(self.pace_choices), state='readonly' if self.pace_choices else 'disabled')
+        self.match_button.configure(state='normal' if self.pace_choices else 'disabled')
         self.pace_choice.set(next((name for name, tid in self.pace_choices.items() if tid == source), ''))
-        self.sensors.configure(self.config)
-        self.append('Train settings saved live; connections and confirmed positions retained.')
+        self.sensors.set_occupancy(self.supervisor.occupied())
+        if self.battery_history_dialog is not None and self.battery_history_dialog.winfo_exists():
+            self.battery_history_dialog.sync_trains()
+            self.battery_history_dialog.refresh()
+        self.append('Trains saved live; other trains keep their connections, controls and confirmed positions.')
+        if added and not self.motor_only:
+            self.append('New active trains are stopped and off track. Place them at a checkpoint or detect their RFID before running.')
         for tid in self.supervisor.trains:
             if tid not in self.tracker.clearance.enabled and self.tracker.clearance.pending.get(tid):
                 self.append(f'{tid}: rear tag removed; previously held blocks stay occupied until verified repositioning.')
         self.refresh_run_status()
         self.refresh_batteries()
+        self.draw()
 
     def update_title(self):
         if hasattr(self, 'config_filename'):
@@ -2302,6 +2354,7 @@ class FleetApp:
             if state is None:
                 current=self.tracker.last_seen.get(tid,(readers[i % len(readers)]['id'],now))[0]
                 state={'index':self.tracker.order.index(current),'fraction':0.,'time':now,'distance':0.,
+                       'speed_scale':1+i*.1,
                        'rear_passages':[(train.get('length_m',.5),current)] if train.get('rear_tag') else []}
                 self.demo_positions[tid]=state
             delta=max(0,now-state['time'])
@@ -2309,7 +2362,7 @@ class FleetApp:
             # The external demo train has its own fixed speed; fleet commands
             # and the matching target cannot change it.
             speed=(DEFAULT_TARGET_SPEED * STUD_M if external else
-                   .3*self.sliders[tid].get()/40*(1+i*.1))
+                   .3*self.sliders[tid].get()/40*state['speed_scale'])
             state['distance'] = state.get('distance',0.) + delta*abs(speed)
             state['fraction'] += delta*speed/readers[state['index']].get('distance_to_next_m',1)
             for due, checkpoint in list(state.get('rear_passages', [])):

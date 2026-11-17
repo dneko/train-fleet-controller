@@ -120,6 +120,8 @@ class SetupDialog(tk.Toplevel):
         self.config_data = copy.deepcopy(config)
         self.config_data.setdefault('saved_trains', [])
         self.original_readers = copy.deepcopy(config['readers'])
+        self.original_train_ids = {train['id'] for train in all_trains(config)}
+        self.id_entries = {}
         self.displayed = {}
         self.on_apply = on_apply
         self.pages = {}
@@ -128,10 +130,9 @@ class SetupDialog(tk.Toplevel):
         self.scan_target = None
         self.scan_section = 'trains'
         self.scan_status = tk.StringVar(value='Select a train, then scan its tag to register it.')
-        ttk.Label(self, text='Train settings save live. Controller or polarity changes stop only that train.\n'
-                  'Roster, control ownership, or loop changes stop and rebuild the fleet.', justify='center').pack(pady=8)
+        ttk.Label(self, text='Save applies train changes live. Other trains keep their connections and positions.\n'
+                  'Only loop changes rebuild the fleet. New active trains await placement or RFID detection.', justify='center').pack(pady=8)
         notebook = self.notebook = ttk.Notebook(self)
-        notebook.pack(fill='both', expand=True)
         train_fields = [('id','ID'), ('name','Display name'), ('control_mode','Controlled by'),
                                 ('controller_type','Motor controller'), ('hub_name','Pybricks Bluetooth hub name'),
                                 ('forward_sign','Forward polarity (+1 or -1)'), ('length_m','Train length (studs)'),
@@ -182,6 +183,8 @@ class SetupDialog(tk.Toplevel):
                     readonly = (key == 'id' and self.train_only) or (key == 'distance_to_next_m' and config.get('map_m_per_unit'))
                     entry = ttk.Entry(form, textvariable=var, width=30, state='readonly' if readonly else 'normal')
                     entry.grid(row=row, column=1, sticky='ew')
+                    if key == 'id' and section != 'readers':
+                        self.id_entries[section] = entry
                     if key == 'hub_name':
                         self.controller_widgets[section].append(entry)
                 variables[key] = var
@@ -215,15 +218,18 @@ class SetupDialog(tk.Toplevel):
             self.refresh(section)
         if self.train_only:
             self.refresh('trains', next(i for i, t in enumerate(config['trains']) if t['id'] == train_id))
+        # Reserve the commit action before the expanding notebook consumes space.
+        self.save_button = ttk.Button(self, text='Save train settings' if self.train_only else
+                   'Save and apply library' if library_only else 'Save and apply setup', command=self.apply)
+        self.save_button.pack(side='bottom', pady=12)
         if on_program is not None:
             def show_program():
                 listing, _ = self.pages['trains']
                 selected = listing.curselection()
                 tid = self.config_data['trains'][selected[0]]['id'] if selected else None
                 on_program(tid)
-            ttk.Button(self, text='City Hub program…', command=show_program).pack(pady=(8,0))
-        ttk.Button(self, text='Save train settings' if self.train_only else
-                   'Save and apply library' if library_only else 'Save and apply setup', command=self.apply).pack(pady=12)
+            ttk.Button(self, text='City Hub program…', command=show_program).pack(side='bottom', pady=(8,0))
+        notebook.pack(fill='both', expand=True)
         self.transient(parent)
         self.grab_set()
 
@@ -249,6 +255,8 @@ class SetupDialog(tk.Toplevel):
         if not listing.curselection():
             return
         item = self.config_data[section][listing.curselection()[0]]
+        if section in self.id_entries:
+            self.id_entries[section].configure(state='readonly' if item['id'] in self.original_train_ids else 'normal')
         for key, var in variables.items():
             if key == 'control_mode':
                 var.set('External controller' if item.get(key) == 'external' else 'Fleet controller')
